@@ -5,6 +5,7 @@
 #include <cassert>
 #include <ranges>
 #include <regex>
+#include <span>
 
 namespace nix {
 
@@ -20,10 +21,7 @@ public:
     }
 
     void upsertFile(
-        const std::string & path,
-        std::shared_ptr<std::basic_iostream<char>> istream,
-        const std::string & mimeType,
-        uint64_t sizeHint) override;
+        const std::string & path, RestartableSource & source, const std::string & mimeType, uint64_t sizeHint) override;
 
 private:
     ref<S3BinaryCacheStoreConfig> s3Config;
@@ -46,6 +44,19 @@ private:
      */
     std::string uploadPart(std::string_view key, std::string_view uploadId, uint64_t partNumber, std::string data);
 
+    struct UploadedPart
+    {
+        uint64_t partNumber;
+        std::string etag;
+    };
+
+    /**
+     * Completes a multipart upload by combining all uploaded parts.
+     * @see
+     * https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html#API_CompleteMultipartUpload_RequestSyntax
+     */
+    void completeMultipartUpload(std::string_view key, std::string_view uploadId, std::span<const UploadedPart> parts);
+
     /**
      * Abort a multipart upload
      *
@@ -56,12 +67,9 @@ private:
 };
 
 void S3BinaryCacheStore::upsertFile(
-    const std::string & path,
-    std::shared_ptr<std::basic_iostream<char>> istream,
-    const std::string & mimeType,
-    uint64_t sizeHint)
+    const std::string & path, RestartableSource & source, const std::string & mimeType, uint64_t sizeHint)
 {
-    HttpBinaryCacheStore::upsertFile(path, istream, mimeType, sizeHint);
+    HttpBinaryCacheStore::upsertFile(path, source, mimeType, sizeHint);
 }
 
 std::string S3BinaryCacheStore::createMultipartUpload(
@@ -78,7 +86,8 @@ std::string S3BinaryCacheStore::createMultipartUpload(
     req.uri = VerbatimURL(url);
 
     req.method = HttpMethod::POST;
-    req.data = "";
+    StringSource payload{std::string_view("")};
+    req.data = {payload};
     req.mimeType = mimeType;
 
     if (contentEncoding) {
@@ -108,7 +117,8 @@ S3BinaryCacheStore::uploadPart(std::string_view key, std::string_view uploadId, 
     url.query["partNumber"] = std::to_string(partNumber);
     url.query["uploadId"] = uploadId;
     req.uri = VerbatimURL(url);
-    req.data = std::move(data);
+    StringSource payload{data};
+    req.data = {payload};
     req.mimeType = "application/octet-stream";
 
     auto result = getFileTransfer()->enqueueFileTransfer(req).get();
@@ -129,6 +139,35 @@ void S3BinaryCacheStore::abortMultipartUpload(std::string_view key, std::string_
     url.query["uploadId"] = uploadId;
     req.uri = VerbatimURL(url);
     req.method = HttpMethod::DELETE;
+
+    getFileTransfer()->enqueueFileTransfer(req).get();
+}
+
+void S3BinaryCacheStore::completeMultipartUpload(
+    std::string_view key, std::string_view uploadId, std::span<const UploadedPart> parts)
+{
+    auto req = makeRequest(key);
+    req.setupForS3();
+
+    auto url = req.uri.parsed();
+    url.query["uploadId"] = uploadId;
+    req.uri = VerbatimURL(url);
+    req.method = HttpMethod::POST;
+
+    std::string xml = "<CompleteMultipartUpload>";
+    for (const auto & part : parts) {
+        xml += "<Part>";
+        xml += "<PartNumber>" + std::to_string(part.partNumber) + "</PartNumber>";
+        xml += "<ETag>" + part.etag + "</ETag>";
+        xml += "</Part>";
+    }
+    xml += "</CompleteMultipartUpload>";
+
+    debug("S3 CompleteMultipartUpload XML (%d parts): %s", parts.size(), xml);
+
+    StringSource payload{xml};
+    req.data = {payload};
+    req.mimeType = "text/xml";
 
     getFileTransfer()->enqueueFileTransfer(req).get();
 }
