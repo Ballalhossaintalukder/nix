@@ -649,8 +649,8 @@ struct FramedSource : Source
                     auto n = readInt(from);
                     if (!n)
                         break;
-                    std::vector<char> data(n);
-                    from(data.data(), n);
+                    pending.resize(n);
+                    from(pending.data(), n);
                 }
             }
         } catch (...) {
@@ -669,11 +669,12 @@ struct FramedSource : Source
                 eof = true;
                 return 0;
             }
-            pending = std::vector<char>(len);
+            pending.resize(len);
             pos = 0;
             from(pending.data(), len);
         }
 
+        assert(pending.size() > pos); /* Sanity check. */
         auto n = std::min(len, pending.size() - pos);
         memcpy(data, pending.data() + pos, n);
         pos += n;
