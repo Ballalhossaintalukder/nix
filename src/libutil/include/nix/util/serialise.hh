@@ -567,6 +567,10 @@ inline uint64_t readLongLong(Source & source)
     return readNum<uint64_t>(source);
 }
 
+/**
+ * Read padding bytes to align `len` up to a multiple of 8. Throws
+ * SerialisationError if any padding byte is non-zero.
+ */
 void readPadding(size_t len, Source & source);
 size_t readString(char * buf, size_t max, Source & source);
 std::string readString(Source & source, size_t max = std::numeric_limits<size_t>::max());
