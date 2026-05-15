@@ -179,22 +179,6 @@ struct TunnelLogger : public Logger
     }
 };
 
-struct TunnelSink : Sink
-{
-    Sink & to;
-
-    TunnelSink(Sink & to)
-        : to(to)
-    {
-    }
-
-    void operator()(std::string_view data) override
-    {
-        to << STDERR_WRITE;
-        writeString(data, to);
-    }
-};
-
 struct TunnelSource : BufferedSource
 {
     Source & from;
