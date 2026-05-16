@@ -1673,7 +1673,12 @@ SingleDrvOutputs DerivationBuilderImpl::registerOutputs()
                     dumpPath(actualPath, rsink);
                     rsink.flush();
                 });
-                std::filesystem::path tmpPath = actualPath.native() + ".tmp";
+                /* Put the temporary copy in a directory inaccessible to the builder.
+                   actualPath might point inside the build chroot, which is controlled
+                   by the derivation builder. */
+                auto [rewriteTempDir, rewriteTempDirFd] = store.createTempDirInStore();
+                AutoDelete delRewriteTempDir(rewriteTempDir);
+                std::filesystem::path tmpPath = rewriteTempDir / "x";
                 restorePath(tmpPath, *source);
                 deletePath(actualPath);
                 movePath(tmpPath, actualPath);
